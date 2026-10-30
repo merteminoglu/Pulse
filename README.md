@@ -51,3 +51,7 @@ For **Open at Login**, move `Pulse.app` to `/Applications` first.
 | Right-click an item, or **Options…** in a panel | Show/hide items, update interval, Open at Login, Quit |
 | ⌘-drag an item | Move it anywhere in the menu bar |
 | Esc or click outside | Close the panel |
+
+## License
+
+[MIT](LICENSE)
