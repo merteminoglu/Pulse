@@ -26,6 +26,16 @@
 - **Open at Login** and **Quit** from the Options menu.
 - **Private:** everything is read locally from macOS. Pulse makes no network requests.
 
+## Download
+
+Grab **Pulse.zip** from the [latest release](https://github.com/merteminoglu/Pulse/releases/latest), unzip it and move `Pulse.app` to `/Applications`. It's a universal build for Apple Silicon and Intel.
+
+Pulse isn't notarized by Apple, so macOS blocks the first launch. To allow it, open **System Settings → Privacy & Security** and click **Open Anyway**. Or run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Pulse.app
+```
+
 ## Requirements
 
 macOS 14 Sonoma or later. Built with Swift, SwiftUI and AppKit, with no third-party dependencies.
