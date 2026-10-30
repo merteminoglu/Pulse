@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Xcode / build output
+build/
+DerivedData/
+*.app
+xcuserdata/
+*.xcuserstate
+*.profraw
+
+# Internal design notes (not part of the public repo)
+HANDOVER.md
+index.html
