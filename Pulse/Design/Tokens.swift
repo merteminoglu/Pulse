@@ -7,7 +7,7 @@ enum Tokens {
         static let labelSize: CGFloat = 8
         static let valueSize: CGFloat = 12
         static let netSize: CGFloat = 9
-        static let numberWeight: CGFloat = 455  // SF weight axis: between regular (400) and medium (510)
+        static let numberWeight: CGFloat = 480  // SF weight axis: between regular (400) and medium (510)
         static let statMinWidth: CGFloat = 27   // fits "88%" at valueSize; "100%" widens the item
         static let netWidth: CGFloat = 44       // rate column; fits "88.8 KB/s" at netSize
     }
