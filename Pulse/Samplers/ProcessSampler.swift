@@ -11,6 +11,16 @@ final class ProcessSampler: Sampler {
 
     private var baselines: [pid_t: ProcessBaseline] = [:]
     private var previousTime: ContinuousClock.Instant?
+
+    /// Names resolved once per process, keyed by pid and checked against the
+    /// process start time so a reused pid is never shown under an old name.
+    private struct Identity {
+        let startTime: UInt64
+        let name: String
+        let bundleID: String?
+    }
+    private var identities: [pid_t: Identity] = [:]
+
     private static var machTimebase: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
@@ -45,15 +55,14 @@ final class ProcessSampler: Sampler {
         }
         previousTime = now
 
-        let runningApps = NSWorkspace.shared.runningApplications
-        var appByPID: [pid_t: NSRunningApplication] = [:]
-        appByPID.reserveCapacity(runningApps.count)
-        for app in runningApps {
-            appByPID[app.processIdentifier] = app
-        }
+        // Built only when a process we haven't named yet shows up: asking
+        // LaunchServices about every running app is the most expensive part.
+        var appByPID: [pid_t: NSRunningApplication]?
 
         var nextBaselines: [pid_t: ProcessBaseline] = [:]
         nextBaselines.reserveCapacity(pids.count)
+        var nextIdentities: [pid_t: Identity] = [:]
+        nextIdentities.reserveCapacity(pids.count)
 
         var entries: [ProcessUsage] = []
         entries.reserveCapacity(pids.count)
@@ -74,6 +83,21 @@ final class ProcessSampler: Sampler {
             let totalNs = (totalMachTicks / denom) &* numer &+ ((totalMachTicks % denom) &* numer) / denom
             nextBaselines[pid] = ProcessBaseline(totalTimeNs: totalNs)
 
+            let identity: Identity
+            if let known = identities[pid], known.startTime == rusage.ri_proc_start_abstime {
+                identity = known
+            } else {
+                if appByPID == nil {
+                    appByPID = Self.runningAppsByPID()
+                }
+                let app = appByPID?[pid]
+                let name = app?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                    ?? Self.processName(for: pid)
+                guard let name else { continue }
+                identity = Identity(startTime: rusage.ri_proc_start_abstime, name: name, bundleID: app?.bundleIdentifier)
+            }
+            nextIdentities[pid] = identity
+
             let memBytes = rusage.ri_phys_footprint
             var cpuPercent: Double = 0
 
@@ -92,16 +116,11 @@ final class ProcessSampler: Sampler {
                 continue
             }
 
-            let app = appByPID[pid]
-            let name = app?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-                ?? Self.processName(for: pid)
-            guard let resolvedName = name else { continue }
-
             entries.append(
                 ProcessUsage(
                     id: pid,
-                    name: resolvedName,
-                    bundleID: app?.bundleIdentifier,
+                    name: identity.name,
+                    bundleID: identity.bundleID,
                     cpuPercent: cpuPercent,
                     memoryBytes: memBytes
                 )
@@ -109,12 +128,23 @@ final class ProcessSampler: Sampler {
         }
 
         baselines = nextBaselines
+        identities = nextIdentities
 
         guard elapsedSeconds != nil else {
             return nil
         }
 
         return entries
+    }
+
+    private static func runningAppsByPID() -> [pid_t: NSRunningApplication] {
+        let runningApps = NSWorkspace.shared.runningApplications
+        var map: [pid_t: NSRunningApplication] = [:]
+        map.reserveCapacity(runningApps.count)
+        for app in runningApps {
+            map[app.processIdentifier] = app
+        }
+        return map
     }
 
     static func topByCPU(_ list: [ProcessUsage], limit: Int = Tokens.Panel.topN) -> [ProcessUsage] {

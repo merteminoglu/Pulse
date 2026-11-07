@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import SwiftUI
 
 /// One menu bar item per metric, so each can be ⌘-dragged among other apps'
 /// items. The autosave name makes macOS remember position and visibility.
@@ -55,20 +54,17 @@ final class StatusItemController: NSObject {
         guard let item = statusItem, let button = item.button else { return }
         if content != lastContent {
             lastContent = content
-            if let image = Self.render(content, scale: button.window?.backingScaleFactor ?? 2) {
-                button.image = image
-                item.length = image.size.width + Tokens.MenuBar.itemPadX * 2
+            let image = StatusItemImage.make(content)
+            button.image = image
+            // A new length relays out the whole menu bar; most ticks keep the width.
+            let length = image.size.width + Tokens.MenuBar.itemPadX * 2
+            if item.length != length {
+                item.length = length
             }
         }
-        button.highlight(isOpen)
-    }
-
-    private static func render(_ content: StatusItemContent, scale: CGFloat) -> NSImage? {
-        let renderer = ImageRenderer(content: StatusItemLabel(content: content))
-        renderer.scale = scale
-        guard let image = renderer.nsImage else { return nil }
-        image.isTemplate = true
-        return image
+        if button.isHighlighted != isOpen {
+            button.highlight(isOpen)
+        }
     }
 
     @objc

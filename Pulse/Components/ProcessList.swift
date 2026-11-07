@@ -4,6 +4,8 @@ import SwiftUI
 struct ProcessList: View {
     let items: [(ProcessUsage, String)]
 
+    private static let rowHeight = Tokens.Panel.processIcon + 6
+
     var body: some View {
         VStack(spacing: 0) {
             if items.isEmpty {
@@ -14,6 +16,9 @@ struct ProcessList: View {
                     Spacer()
                 }
                 .padding(.vertical, 3)
+                // Processes are only sampled while a panel is open, so the list
+                // starts empty for a moment; hold its space so the panel doesn't jump.
+                .frame(minHeight: Self.rowHeight * CGFloat(Tokens.Panel.topN), alignment: .top)
             } else {
                 ForEach(items, id: \.0.id) { process, formattedValue in
                     HStack(spacing: 8) {
@@ -45,16 +50,31 @@ private struct ProcessIconView: View {
     let name: String
 
     var body: some View {
-        if let nsImage = NSRunningApplication(processIdentifier: pid)?.icon {
-            Image(nsImage: nsImage)
-                .resizable()
-                .interpolation(.high)
-                .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
-        } else {
-            Image(nsImage: NSWorkspace.shared.icon(for: .unixExecutable))
-                .resizable()
-                .interpolation(.high)
-                .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
-        }
+        Image(nsImage: ProcessIconCache.icon(pid: pid, name: name))
+            .resizable()
+            .interpolation(.high)
+            .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+    }
+}
+
+/// The rows redraw every sample; looking each icon up through LaunchServices
+/// every time would cost more than the sampling itself.
+@MainActor
+private enum ProcessIconCache {
+    private struct Key: Hashable {
+        let pid: pid_t
+        let name: String
+    }
+
+    private static var icons: [Key: NSImage] = [:]
+    private static let generic = NSWorkspace.shared.icon(for: .unixExecutable)
+
+    static func icon(pid: pid_t, name: String) -> NSImage {
+        let key = Key(pid: pid, name: name)
+        if let cached = icons[key] { return cached }
+        if icons.count >= 64 { icons.removeAll() }
+        let icon = NSRunningApplication(processIdentifier: pid)?.icon ?? generic
+        icons[key] = icon
+        return icon
     }
 }

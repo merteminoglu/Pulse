@@ -19,7 +19,11 @@ final class MetricsStore {
 
     private(set) var processes: [ProcessUsage] = []
 
-    var openPanel: Metric?
+    var openPanel: Metric? {
+        didSet {
+            if openPanel != oldValue { panelDidChange() }
+        }
+    }
 
     let gpuAvailable: Bool
 
@@ -31,6 +35,7 @@ final class MetricsStore {
     private var scheduler: SampleScheduler?
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
+    private var lastProcessSample: ContinuousClock.Instant?
 
     init(scheduler: SampleScheduler? = nil) {
         self.cpuSampler = CPUSampler(layout: SystemInfo.coreLayout)
@@ -41,6 +46,7 @@ final class MetricsStore {
         self.networkSampler = NetworkSampler()
         self.processSampler = ProcessSampler(topN: Tokens.Panel.topN)
         self.scheduler = scheduler
+        networkSampler.includesInterfaceDetails = false
 
         setupSleepWakeNotifications()
     }
@@ -115,8 +121,51 @@ final class MetricsStore {
             networkHistory.append(s)
         }
 
-        // Sampled even while panels are closed (~2 ms per tick) so the top
-        // process lists are already filled the moment a panel opens.
+        if needsProcesses {
+            sampleProcesses(now: now)
+        }
+    }
+
+    // MARK: - Panel-only work
+
+    /// Only the CPU and memory panels list processes. Walking every process
+    /// costs more than all the other samplers combined, so it runs only while
+    /// one of those panels is open.
+    private var needsProcesses: Bool {
+        openPanel == .cpu || openPanel == .memory
+    }
+
+    private func panelDidChange() {
+        networkSampler.includesInterfaceDetails = (openPanel == .network)
+        if openPanel == .network, let current = network {
+            network = current.replacingPrimary(networkSampler.currentInterface())
+        }
+
+        if needsProcesses {
+            guard lastProcessSample == nil else { return }   // CPU <-> memory switch: keep going
+            // Baseline now, then a short first window so the list fills in
+            // right after the panel opens instead of a full interval later.
+            sampleProcesses(now: .now)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.firstProcessWindow) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.needsProcesses else { return }
+                    self.sampleProcesses(now: .now)
+                }
+            }
+        } else if lastProcessSample != nil {
+            processSampler.reset()
+            processes = []
+            lastProcessSample = nil
+        }
+    }
+
+    private static let firstProcessWindow: TimeInterval = 0.35
+
+    private func sampleProcesses(now: ContinuousClock.Instant) {
+        // A scheduler tick landing right after the quick first sample would
+        // measure CPU over a sliver of time; let it wait for the next one.
+        if let last = lastProcessSample, now - last < .milliseconds(300) { return }
+        lastProcessSample = now
         if let procs = processSampler.sample(now: now) {
             processes = procs
         }

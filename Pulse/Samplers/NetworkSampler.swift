@@ -28,6 +28,11 @@ final class NetworkSampler: Sampler {
     private var sessionRx: UInt64 = 0
     private var sessionTx: UInt64 = 0
 
+    /// Interface details (Wi-Fi name, IP, link speed) only show in the network
+    /// panel, and reading the SSID is an XPC round trip to the Wi-Fi daemon,
+    /// so the store turns this on only while that panel is open.
+    var includesInterfaceDetails = true
+
     init(
         countersProvider: @escaping CountersProvider = NetworkSampler.readInterfaceCounters,
         primaryProvider: @escaping PrimaryInfoProvider = NetworkSampler.resolvePrimaryInterface
@@ -56,7 +61,7 @@ final class NetworkSampler: Sampler {
     func sample(now: ContinuousClock.Instant) -> NetworkSample? {
         let rawList = countersProvider()
         let active = rawList.filter { Self.shouldIncludeInterface(name: $0.name, flags: $0.flags) }
-        let primary = primaryProvider(rawList)
+        let primary = includesInterfaceDetails ? primaryProvider(rawList) : nil
 
         if let prevPrimary = previousPrimaryName,
            let currentPrimary = primary?.bsdName,
@@ -114,6 +119,11 @@ final class NetworkSampler: Sampler {
             sessionTx: sessionTx,
             primary: primary
         )
+    }
+
+    /// Details for the primary interface right now, without touching rate baselines.
+    func currentInterface() -> InterfaceInfo? {
+        primaryProvider(countersProvider())
     }
 
     static func readInterfaceCounters() -> [RawInterfaceCounters] {
@@ -205,8 +215,11 @@ final class NetworkSampler: Sampler {
         )
     }
 
+    /// One session with configd for the app's lifetime instead of one per read.
+    private static let dynamicStore = SCDynamicStoreCreate(nil, "Pulse" as CFString, nil, nil)
+
     private static func defaultRouteInterfaceName() -> String? {
-        guard let store = SCDynamicStoreCreate(nil, "Pulse" as CFString, nil, nil),
+        guard let store = dynamicStore,
               let dict = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any],
               let primary = dict["PrimaryInterface"] as? String, !primary.isEmpty else {
             return nil

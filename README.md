@@ -22,7 +22,7 @@
 - **Menu bar readouts** for CPU, GPU, memory and network that blend in with the system icons, including dimming on inactive displays.
 - **Detail panels:** history graphs, per-core load, memory breakdown and pressure, and top processes.
 - **Your layout:** ⌘-drag items to reorder them among other menu bar apps, or hide the ones you don't need.
-- **Light on resources:** about 1–3% CPU, with a 1, 2 or 3 second update interval.
+- **Light on resources:** about 1% CPU and under 20 MB of memory, with a 1, 2 or 3 second update interval. Process lists and Wi-Fi details are only read while their panel is open.
 - **Open at Login** and **Quit** from the Options menu.
 - **Private:** everything is read locally from macOS. Pulse makes no network requests.
 

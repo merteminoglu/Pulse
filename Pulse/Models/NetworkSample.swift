@@ -35,6 +35,10 @@ struct NetworkSample: Equatable {
         self.primary = primary
     }
 
+    func replacingPrimary(_ info: InterfaceInfo?) -> NetworkSample {
+        NetworkSample(rxPerSec: rxPerSec, txPerSec: txPerSec, sessionRx: sessionRx, sessionTx: sessionTx, primary: info)
+    }
+
     private static func sanitize(_ v: Double) -> Double {
         guard v.isFinite else { return 0 }
         return max(0, v)
