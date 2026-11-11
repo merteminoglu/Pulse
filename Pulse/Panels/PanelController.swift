@@ -71,10 +71,22 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
 
         panelWindow?.orderOut(nil)
-        // show() always builds a fresh hosting view, so drop the old one now
-        // rather than keep its SwiftUI graph alive while nobody sees it.
-        panelWindow?.contentView = nil
-        ProcessIconCache.removeAll()
+        releaseContentWhenIdle()
+    }
+
+    /// show() always builds a fresh hosting view, so drop the old one rather
+    /// than keep its SwiftUI graph alive while nobody sees it. Not right away:
+    /// close() can run inside the panel's own button action (footer Options
+    /// menu → hide an item), and the view must outlive that call. Default
+    /// mode only, so it waits until any menu tracking has ended.
+    private func releaseContentWhenIdle() {
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.store.openPanel == nil else { return }
+                self.panelWindow?.contentView = nil
+                ProcessIconCache.removeAll()
+            }
+        }
     }
 
     private func show(_ metric: Metric, anchor: NSStatusBarButton) {
