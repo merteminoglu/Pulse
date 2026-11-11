@@ -24,14 +24,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu lists them in reading order.
         options.items = statusItems.reversed()
         options.store = metricsStore
-        options.onVisibilityChange = { [weak panels] in panels?.close() }
+        options.onVisibilityChange = { [weak self, weak panels] in
+            panels?.close()
+            self?.updateVisibleMetrics()
+        }
 
         // Never come up with everything hidden: there'd be no way to reach Pulse.
         if !statusItems.contains(where: \.isVisible) {
             statusItems.last?.isVisible = true
         }
+        updateVisibleMetrics()
 
         metricsStore.start()
+    }
+
+    private func updateVisibleMetrics() {
+        store?.setVisibleMetrics(Set(statusItems.filter(\.isVisible).map(\.metric)))
     }
 
     func applicationWillTerminate(_ notification: Notification) {

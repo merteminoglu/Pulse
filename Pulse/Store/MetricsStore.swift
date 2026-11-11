@@ -39,6 +39,8 @@ final class MetricsStore {
     private var pauseObservers: [NSObjectProtocol] = []
     private var pauseState = PauseState()
     private var lastProcessSample: ContinuousClock.Instant?
+    /// Metrics whose menu bar item is shown; hidden ones are not sampled.
+    private var visibleMetrics = Set(Metric.allCases)
 
     init(scheduler: SampleScheduler? = nil) {
         self.cpuSampler = CPUSampler(layout: SystemInfo.coreLayout)
@@ -119,25 +121,40 @@ final class MetricsStore {
         processSampler.reset()
     }
 
+    /// Stops sampling metrics whose item is hidden. A metric shown again
+    /// reads as the placeholder until its first fresh sample, never a rate
+    /// computed across the time it was hidden.
+    func setVisibleMetrics(_ metrics: Set<Metric>) {
+        for metric in visibleMetrics.subtracting(metrics) {
+            switch metric {
+            case .cpu: cpuSampler.reset(); cpu = nil
+            case .gpu: gpuSampler?.reset(); gpu = nil
+            case .memory: memorySampler.reset(); memory = nil
+            case .network: networkSampler.reset(); network = nil
+            }
+        }
+        visibleMetrics = metrics
+    }
+
     private func tick() {
         let now = ContinuousClock.now
 
-        if let s = cpuSampler.sample(now: now) {
+        if visibleMetrics.contains(.cpu), let s = cpuSampler.sample(now: now) {
             cpu = s
             cpuHistory.append(s)
         }
 
-        if let s = gpuSampler?.sample(now: now) {
+        if visibleMetrics.contains(.gpu), let s = gpuSampler?.sample(now: now) {
             gpu = s
             gpuHistory.append(s)
         }
 
-        if let s = memorySampler.sample(now: now) {
+        if visibleMetrics.contains(.memory), let s = memorySampler.sample(now: now) {
             memory = s
             memoryHistory.append(s)
         }
 
-        if let s = networkSampler.sample(now: now) {
+        if visibleMetrics.contains(.network), let s = networkSampler.sample(now: now) {
             network = s
             networkHistory.append(s)
         }

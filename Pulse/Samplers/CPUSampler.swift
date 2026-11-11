@@ -106,7 +106,7 @@ final class CPUSampler: Sampler {
         var numCPUInfo: mach_msg_type_number_t = 0
 
         let result = host_processor_info(
-            mach_host_self(),
+            SystemInfo.hostPort,
             PROCESSOR_CPU_LOAD_INFO,
             &numCPUs,
             &cpuInfo,

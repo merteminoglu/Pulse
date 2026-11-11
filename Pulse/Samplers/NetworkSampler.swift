@@ -128,13 +128,28 @@ final class NetworkSampler: Sampler {
         primaryProvider(countersProvider())
     }
 
+    /// Reused across reads (the list is ~15 KB) so a tick is one sysctl with
+    /// no size probe or allocation. Only touched from the main thread.
+    private static var interfaceListBuffer = [UInt8](repeating: 0, count: 32 * 1024)
+
     static func readInterfaceCounters() -> [RawInterfaceCounters] {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
-        var len: Int = 0
-        guard sysctl(&mib, 6, nil, &len, nil, 0) == 0, len > 0 else { return [] }
+        // Borrow the buffer rather than copy it: a second reference would
+        // make the array copy itself on the first write.
+        var buffer: [UInt8] = []
+        swap(&buffer, &interfaceListBuffer)
+        defer { swap(&buffer, &interfaceListBuffer) }
 
-        var buffer = [UInt8](repeating: 0, count: len)
-        guard sysctl(&mib, 6, &buffer, &len, nil, 0) == 0 else { return [] }
+        var len = buffer.count
+        if sysctl(&mib, 6, &buffer, &len, nil, 0) != 0 {
+            // More interfaces than fit: grow to the reported size and retry once.
+            guard errno == ENOMEM else { return [] }
+            var needed = 0
+            guard sysctl(&mib, 6, nil, &needed, nil, 0) == 0, needed > 0 else { return [] }
+            buffer = [UInt8](repeating: 0, count: needed + 4096)
+            len = buffer.count
+            guard sysctl(&mib, 6, &buffer, &len, nil, 0) == 0 else { return [] }
+        }
 
         var results: [RawInterfaceCounters] = []
         var offset = 0
