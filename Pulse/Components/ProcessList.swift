@@ -60,7 +60,7 @@ private struct ProcessIconView: View {
 /// The rows redraw every sample; looking each icon up through LaunchServices
 /// every time would cost more than the sampling itself.
 @MainActor
-private enum ProcessIconCache {
+enum ProcessIconCache {
     private struct Key: Hashable {
         let pid: pid_t
         let name: String
@@ -76,5 +76,10 @@ private enum ProcessIconCache {
         let icon = NSRunningApplication(processIdentifier: pid)?.icon ?? generic
         icons[key] = icon
         return icon
+    }
+
+    /// Called when the panel closes: the icons are cheap to look up again.
+    static func removeAll() {
+        icons.removeAll()
     }
 }

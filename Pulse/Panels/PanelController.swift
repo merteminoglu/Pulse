@@ -71,6 +71,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
 
         panelWindow?.orderOut(nil)
+        // show() always builds a fresh hosting view, so drop the old one now
+        // rather than keep its SwiftUI graph alive while nobody sees it.
+        panelWindow?.contentView = nil
+        ProcessIconCache.removeAll()
     }
 
     private func show(_ metric: Metric, anchor: NSStatusBarButton) {
