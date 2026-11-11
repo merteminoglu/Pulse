@@ -33,8 +33,8 @@ final class MetricsStore {
     private let networkSampler: NetworkSampler
     private let processSampler: ProcessSampler
     private var scheduler: SampleScheduler?
-    private var sleepObserver: NSObjectProtocol?
-    private var wakeObserver: NSObjectProtocol?
+    private var pauseObservers: [NSObjectProtocol] = []
+    private var pauseState = PauseState()
     private var lastProcessSample: ContinuousClock.Instant?
 
     init(scheduler: SampleScheduler? = nil) {
@@ -49,7 +49,7 @@ final class MetricsStore {
         networkSampler.includesInterfaceDetails = false
         applySampleGap()
 
-        setupSleepWakeNotifications()
+        setupPauseNotifications()
     }
 
     /// Seconds between samples. The delta samplers' sleep/wake threshold
@@ -77,6 +77,8 @@ final class MetricsStore {
     }
 
     func start() {
+        // Resuming calls start() again; a refresh change while paused waits for it.
+        guard !pauseState.isPaused else { return }
         if scheduler == nil {
             scheduler = SampleScheduler(
                 interval: .seconds(refreshSeconds),
@@ -184,27 +186,36 @@ final class MetricsStore {
         }
     }
 
-    private func setupSleepWakeNotifications() {
+    /// Nobody can see the readouts while the system or display sleeps or
+    /// another user's session is in front, so stop sampling and redrawing.
+    private func setupPauseNotifications() {
         let center = NSWorkspace.shared.notificationCenter
-        sleepObserver = center.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.stop()
-            }
+        let pairs: [(pause: Notification.Name, resume: Notification.Name, reason: PauseReason)] = [
+            (NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification, .systemSleep),
+            (NSWorkspace.screensDidSleepNotification, NSWorkspace.screensDidWakeNotification, .displaySleep),
+            (NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.sessionDidBecomeActiveNotification, .sessionInactive),
+        ]
+        for pair in pairs {
+            let reason = pair.reason
+            pauseObservers.append(center.addObserver(forName: pair.pause, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pause(reason) }
+            })
+            pauseObservers.append(center.addObserver(forName: pair.resume, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.resume(reason) }
+            })
         }
-        wakeObserver = center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.handleWake()
-                self.start()
-            }
+    }
+
+    private func pause(_ reason: PauseReason) {
+        if pauseState.pause(reason) {
+            stop()
+        }
+    }
+
+    private func resume(_ reason: PauseReason) {
+        if pauseState.resume(reason) {
+            handleWake()
+            start()
         }
     }
 }
