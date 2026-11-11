@@ -80,11 +80,14 @@ final class MetricsStore {
         // Resuming calls start() again; a refresh change while paused waits for it.
         guard !pauseState.isPaused else { return }
         if scheduler == nil {
+            // Fires on the main queue: the samplers run there anyway, so a
+            // background timer only added a thread wake and a Task per tick.
             scheduler = SampleScheduler(
                 interval: .seconds(refreshSeconds),
-                tolerance: SampleGap.leeway(forInterval: refreshSeconds)
+                tolerance: SampleGap.leeway(forInterval: refreshSeconds),
+                queue: .main
             ) { [weak self] in
-                Task { @MainActor [weak self] in
+                MainActor.assumeIsolated {
                     self?.tick()
                 }
             }
