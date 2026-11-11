@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        installMainMenu()
 
         let metricsStore = MetricsStore()
         let panels = PanelController(store: metricsStore)
@@ -36,6 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateVisibleMetrics()
 
         metricsStore.start()
+    }
+
+    /// Never shown (Pulse has no menu bar of its own), but its key
+    /// equivalents still work while the panel is key: keep ⌘Q.
+    private func installMainMenu() {
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit Pulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appItem = NSMenuItem()
+        appItem.submenu = appMenu
+        let mainMenu = NSMenu()
+        mainMenu.addItem(appItem)
+        NSApp.mainMenu = mainMenu
     }
 
     private func updateVisibleMetrics() {
