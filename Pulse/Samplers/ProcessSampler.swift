@@ -13,6 +13,9 @@ final class ProcessSampler: Sampler {
     private var previousTime: ContinuousClock.Instant?
     /// A longer gap since the last reading means sleep/wake: start over.
     var maxGap: Duration = .seconds(5)
+    /// Processes we may not read (other users' and root's): over a third of
+    /// all pids. Skipped until they exit, rather than failing every tick.
+    private var deniedPIDs: Set<pid_t> = []
 
     /// Names resolved once per process, keyed by pid and checked against the
     /// process start time so a reused pid is never shown under an old name.
@@ -36,11 +39,16 @@ final class ProcessSampler: Sampler {
     func reset() {
         baselines.removeAll()
         previousTime = nil
+        deniedPIDs.removeAll()
     }
 
     func sample(now: ContinuousClock.Instant) -> [ProcessUsage]? {
         let pids = Self.allPIDs()
         guard !pids.isEmpty else { return nil }
+        // Forget pids that exited, so a reused one is tried again.
+        if !deniedPIDs.isEmpty {
+            deniedPIDs.formIntersection(pids)
+        }
 
         let elapsedSeconds: Double?
         if let prev = previousTime {
@@ -72,14 +80,17 @@ final class ProcessSampler: Sampler {
         let numer = UInt64(max(1, Self.machTimebase.numer))
         let denom = UInt64(max(1, Self.machTimebase.denom))
 
-        for pid in pids where pid > 0 {
+        for pid in pids where pid > 0 && !deniedPIDs.contains(pid) {
             var rusage = rusage_info_v4()
             let rc = withUnsafeMutablePointer(to: &rusage) { ptr -> Int32 in
                 ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rusagePtr in
                     proc_pid_rusage(pid, RUSAGE_INFO_V4, rusagePtr)
                 }
             }
-            guard rc == 0 else { continue }
+            guard rc == 0 else {
+                if errno == EPERM { deniedPIDs.insert(pid) }
+                continue
+            }
 
             let totalMachTicks = rusage.ri_user_time &+ rusage.ri_system_time
             let totalNs = (totalMachTicks / denom) &* numer &+ ((totalMachTicks % denom) &* numer) / denom
@@ -150,25 +161,42 @@ final class ProcessSampler: Sampler {
     }
 
     static func topByCPU(_ list: [ProcessUsage], limit: Int = Tokens.Panel.topN) -> [ProcessUsage] {
-        list.sorted {
+        top(list, limit: limit) {
             if $0.cpuPercent != $1.cpuPercent {
                 return $0.cpuPercent > $1.cpuPercent
             }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
-        .prefix(limit)
-        .map { $0 }
     }
 
     static func topByMemory(_ list: [ProcessUsage], limit: Int = Tokens.Panel.topN) -> [ProcessUsage] {
-        list.sorted {
+        top(list, limit: limit) {
             if $0.memoryBytes != $1.memoryBytes {
                 return $0.memoryBytes > $1.memoryBytes
             }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
-        .prefix(limit)
-        .map { $0 }
+    }
+
+    /// The first `limit` entries of a stable sort by `ranksBefore`, in one
+    /// pass: most entries lose to the current last place on the value alone,
+    /// so names are compared only on ties with the buffer.
+    private static func top(
+        _ list: [ProcessUsage],
+        limit: Int,
+        by ranksBefore: (ProcessUsage, ProcessUsage) -> Bool
+    ) -> [ProcessUsage] {
+        guard limit > 0 else { return [] }
+        var top: [ProcessUsage] = []
+        top.reserveCapacity(min(limit, list.count) + 1)
+        for entry in list {
+            if top.count == limit, !ranksBefore(entry, top[limit - 1]) { continue }
+            var index = top.count
+            while index > 0, ranksBefore(entry, top[index - 1]) { index -= 1 }
+            top.insert(entry, at: index)
+            if top.count > limit { top.removeLast() }
+        }
+        return top
     }
 
     private static func allPIDs() -> [pid_t] {

@@ -65,8 +65,7 @@ struct CPUPanel: View {
             }
 
             PanelSection(title: "Top Processes") {
-                let top = ProcessSampler.topByCPU(store.processes, limit: Tokens.Panel.topN)
-                ProcessList(items: top.map { ($0, Fmt.percent1($0.cpuPercent)) })
+                ProcessList(items: store.topCPU.map { ($0, Fmt.percent1($0.cpuPercent)) })
             }
 
             PanelSection {

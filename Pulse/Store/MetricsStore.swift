@@ -17,7 +17,10 @@ final class MetricsStore {
     private(set) var network: NetworkSample?
     private(set) var networkHistory = RingBuffer<NetworkSample>(capacity: Tokens.historyLength)
 
-    private(set) var processes: [ProcessUsage] = []
+    /// Top processes for the CPU and memory panels, selected once per sample
+    /// rather than in the panels' bodies.
+    private(set) var topCPU: [ProcessUsage] = []
+    private(set) var topMemory: [ProcessUsage] = []
 
     var openPanel: Metric? {
         didSet {
@@ -172,7 +175,8 @@ final class MetricsStore {
             }
         } else if lastProcessSample != nil {
             processSampler.reset()
-            processes = []
+            topCPU = []
+            topMemory = []
             lastProcessSample = nil
         }
     }
@@ -185,7 +189,8 @@ final class MetricsStore {
         if let last = lastProcessSample, now - last < .milliseconds(300) { return }
         lastProcessSample = now
         if let procs = processSampler.sample(now: now) {
-            processes = procs
+            topCPU = ProcessSampler.topByCPU(procs, limit: Tokens.Panel.topN)
+            topMemory = ProcessSampler.topByMemory(procs, limit: Tokens.Panel.topN)
         }
     }
 
