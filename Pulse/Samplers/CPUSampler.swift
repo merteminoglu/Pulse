@@ -16,6 +16,8 @@ final class CPUSampler: Sampler {
     private var previousTicks: [CPUTicks]?
     private var previousTime: ContinuousClock.Instant?
     private var previousSample: CPUSample?
+    /// A longer gap since the last reading means sleep/wake: start over.
+    var maxGap: Duration = .seconds(5)
 
     init(
         layout: CoreLayout = SystemInfo.coreLayout,
@@ -36,7 +38,7 @@ final class CPUSampler: Sampler {
             return nil
         }
 
-        if let prevTime = previousTime, (now - prevTime) > .seconds(5) {
+        if let prevTime = previousTime, (now - prevTime) > maxGap {
             previousTicks = current.ticks
             previousTime = now
             return nil

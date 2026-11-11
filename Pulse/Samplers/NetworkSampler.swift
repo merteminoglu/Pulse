@@ -27,6 +27,8 @@ final class NetworkSampler: Sampler {
     private var previousPrimaryName: String?
     private var sessionRx: UInt64 = 0
     private var sessionTx: UInt64 = 0
+    /// A longer gap since the last reading means sleep/wake: start over.
+    var maxGap: Duration = .seconds(5)
 
     /// Interface details (Wi-Fi name, IP, link speed) only show in the network
     /// panel, and reading the SSID is an XPC round trip to the Wi-Fi daemon,
@@ -83,7 +85,7 @@ final class NetworkSampler: Sampler {
 
         let elapsed = now - prevTime
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        if seconds <= 0 || seconds > 5.0 {
+        if seconds <= 0 || elapsed > maxGap {
             previousByInterface = currentMap
             previousTime = now
             return nil

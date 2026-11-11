@@ -47,13 +47,15 @@ final class MetricsStore {
         self.processSampler = ProcessSampler(topN: Tokens.Panel.topN)
         self.scheduler = scheduler
         networkSampler.includesInterfaceDetails = false
+        applySampleGap()
 
         setupSleepWakeNotifications()
     }
 
-    /// Seconds between samples. Capped at 3: samplers treat a gap over 5 s as
-    /// sleep/wake and discard it, so longer intervals would lose most readings.
-    static let refreshChoices = [1, 2, 3]
+    /// Seconds between samples. The delta samplers' sleep/wake threshold
+    /// scales with the interval (`SampleGap`), so long intervals keep their
+    /// readings; idle cost falls in proportion.
+    static let refreshChoices = [1, 2, 3, 5, 10]
     private static let refreshKey = "refreshIntervalSeconds"
 
     private(set) var refreshSeconds: Int = {
@@ -65,6 +67,7 @@ final class MetricsStore {
         guard Self.refreshChoices.contains(seconds), seconds != refreshSeconds else { return }
         refreshSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: Self.refreshKey)
+        applySampleGap()
         let wasRunning = scheduler != nil
         scheduler?.stop()
         scheduler = nil
@@ -75,7 +78,10 @@ final class MetricsStore {
 
     func start() {
         if scheduler == nil {
-            scheduler = SampleScheduler(interval: .seconds(refreshSeconds)) { [weak self] in
+            scheduler = SampleScheduler(
+                interval: .seconds(refreshSeconds),
+                tolerance: SampleGap.leeway(forInterval: refreshSeconds)
+            ) { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.tick()
                 }
@@ -88,6 +94,13 @@ final class MetricsStore {
 
     func stop() {
         scheduler?.stop()
+    }
+
+    private func applySampleGap() {
+        let gap = SampleGap.maxGap(forInterval: refreshSeconds)
+        cpuSampler.maxGap = gap
+        networkSampler.maxGap = gap
+        processSampler.maxGap = gap
     }
 
     func handleWake() {

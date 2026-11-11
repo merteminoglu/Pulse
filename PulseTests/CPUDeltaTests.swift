@@ -48,4 +48,41 @@ final class CPUDeltaTests: XCTestCase {
         let second = sampler.sample(now: t0.advanced(by: .seconds(2)))
         XCTAssertEqual(second, first)
     }
+
+    /// A sampler whose ticks advance on every read, so each delta is non-zero.
+    private func advancingSampler() -> CPUSampler {
+        var step: UInt32 = 0
+        return CPUSampler(layout: CoreLayout(performance: 1, efficiency: 0)) {
+            step += 1
+            return (ticks: [CPUTicks(user: 100 + 20 * step, system: 50 + 10 * step, idle: 850 + 70 * step, nice: 0)],
+                    load: LoadAverage(one: 1.0, five: 1.0, fifteen: 1.0))
+        }
+    }
+
+    func testDefaultGapStillRebaselinesAfterSixSeconds() {
+        let sampler = advancingSampler()
+        let t0 = ContinuousClock.now
+        XCTAssertNil(sampler.sample(now: t0))
+        XCTAssertNil(sampler.sample(now: t0.advanced(by: .seconds(6))))
+    }
+
+    func testLongIntervalSampleSurvives() {
+        let sampler = advancingSampler()
+        sampler.maxGap = .seconds(23)
+        let t0 = ContinuousClock.now
+        XCTAssertNil(sampler.sample(now: t0))
+        XCTAssertNotNil(sampler.sample(now: t0.advanced(by: .seconds(10))))
+        // A tick delivered late by timer coalescing still counts.
+        XCTAssertNotNil(sampler.sample(now: t0.advanced(by: .seconds(24))))
+    }
+
+    func testGapBeyondMaxRebaselines() {
+        let sampler = advancingSampler()
+        sampler.maxGap = .seconds(23)
+        let t0 = ContinuousClock.now
+        XCTAssertNil(sampler.sample(now: t0))
+        XCTAssertNotNil(sampler.sample(now: t0.advanced(by: .seconds(10))))
+        XCTAssertNil(sampler.sample(now: t0.advanced(by: .seconds(34))))
+        XCTAssertNotNil(sampler.sample(now: t0.advanced(by: .seconds(44))))
+    }
 }

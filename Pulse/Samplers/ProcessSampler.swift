@@ -11,6 +11,8 @@ final class ProcessSampler: Sampler {
 
     private var baselines: [pid_t: ProcessBaseline] = [:]
     private var previousTime: ContinuousClock.Instant?
+    /// A longer gap since the last reading means sleep/wake: start over.
+    var maxGap: Duration = .seconds(5)
 
     /// Names resolved once per process, keyed by pid and checked against the
     /// process start time so a reused pid is never shown under an old name.
@@ -44,7 +46,7 @@ final class ProcessSampler: Sampler {
         if let prev = previousTime {
             let diff = now - prev
             let secs = Double(diff.components.seconds) + Double(diff.components.attoseconds) / 1e18
-            if secs > 0 && secs <= 5.0 {
+            if secs > 0 && diff <= maxGap {
                 elapsedSeconds = secs
             } else {
                 baselines.removeAll()
