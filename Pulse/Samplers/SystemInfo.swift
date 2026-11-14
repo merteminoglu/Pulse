@@ -3,6 +3,10 @@ import Foundation
 import IOKit
 
 enum SystemInfo {
+    /// mach_host_self() adds a send-right reference on every call and the
+    /// samplers never released it; one per process is enough.
+    static let hostPort: mach_port_t = mach_host_self()
+
     static let chipName: String = {
         if let brand = sysctlString("machdep.cpu.brand_string"), !brand.isEmpty {
             return brand

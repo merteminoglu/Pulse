@@ -45,11 +45,11 @@ macOS 14 Sonoma or later. Built with Swift, SwiftUI and AppKit, with no third-pa
 ```sh
 git clone https://github.com/merteminoglu/Pulse.git
 cd Pulse
-xcodebuild -project Pulse.xcodeproj -scheme Pulse -configuration Release -derivedDataPath build build
+Scripts/build.sh
 open build/Build/Products/Release/Pulse.app
 ```
 
-Or open `Pulse.xcodeproj` in Xcode and press ⌘R. Run the tests with ⌘U.
+`Scripts/test.sh` runs the tests and `Scripts/install.sh` builds, copies the app to `/Applications` and relaunches it. Or open `Pulse.xcodeproj` in Xcode and press ⌘R. Run the tests with ⌘U.
 
 For **Open at Login**, move `Pulse.app` to `/Applications` first.
 

@@ -96,14 +96,18 @@ enum StatusItemImage {
         let style: Style
     }
 
+    /// Labels and percentages: bounded by construction (three labels, the
+    /// placeholder and 0–100%), so kept for good.
     private static var lines: [LineKey: Line] = [:]
+    /// Network rates rarely repeat; keep only the ones in recent use.
+    private static var netLines = GenerationCache<String, Line>(generationSize: 64)
 
     private static func line(_ string: String, _ style: Style) -> Line {
+        if style == .net {
+            return netLines.value(for: string) { Line(string, style: .net) }
+        }
         let key = LineKey(string: string, style: style)
         if let cached = lines[key] { return cached }
-        // Percentages settle into ~100 strings; network rates keep producing
-        // new ones, so start over now and then rather than track recency.
-        if lines.count >= 512 { lines.removeAll(keepingCapacity: true) }
         let line = Line(string, style: style)
         lines[key] = line
         return line
