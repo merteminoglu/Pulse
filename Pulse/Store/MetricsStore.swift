@@ -17,7 +17,10 @@ final class MetricsStore {
     private(set) var network: NetworkSample?
     private(set) var networkHistory = RingBuffer<NetworkSample>(capacity: Tokens.historyLength)
 
-    private(set) var processes: [ProcessUsage] = []
+    /// Top processes for the CPU and memory panels, selected once per sample
+    /// rather than in the panels' bodies.
+    private(set) var topCPU: [ProcessUsage] = []
+    private(set) var topMemory: [ProcessUsage] = []
 
     var openPanel: Metric? {
         didSet {
@@ -33,9 +36,11 @@ final class MetricsStore {
     private let networkSampler: NetworkSampler
     private let processSampler: ProcessSampler
     private var scheduler: SampleScheduler?
-    private var sleepObserver: NSObjectProtocol?
-    private var wakeObserver: NSObjectProtocol?
+    private var pauseObservers: [NSObjectProtocol] = []
+    private var pauseState = PauseState()
     private var lastProcessSample: ContinuousClock.Instant?
+    /// Metrics whose menu bar item is shown; hidden ones are not sampled.
+    private var visibleMetrics = Set(Metric.allCases)
 
     init(scheduler: SampleScheduler? = nil) {
         self.cpuSampler = CPUSampler(layout: SystemInfo.coreLayout)
@@ -47,13 +52,15 @@ final class MetricsStore {
         self.processSampler = ProcessSampler(topN: Tokens.Panel.topN)
         self.scheduler = scheduler
         networkSampler.includesInterfaceDetails = false
+        applySampleGap()
 
-        setupSleepWakeNotifications()
+        setupPauseNotifications()
     }
 
-    /// Seconds between samples. Capped at 3: samplers treat a gap over 5 s as
-    /// sleep/wake and discard it, so longer intervals would lose most readings.
-    static let refreshChoices = [1, 2, 3]
+    /// Seconds between samples. The delta samplers' sleep/wake threshold
+    /// scales with the interval (`SampleGap`), so long intervals keep their
+    /// readings; idle cost falls in proportion.
+    static let refreshChoices = [1, 2, 3, 5, 10]
     private static let refreshKey = "refreshIntervalSeconds"
 
     private(set) var refreshSeconds: Int = {
@@ -65,6 +72,7 @@ final class MetricsStore {
         guard Self.refreshChoices.contains(seconds), seconds != refreshSeconds else { return }
         refreshSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: Self.refreshKey)
+        applySampleGap()
         let wasRunning = scheduler != nil
         scheduler?.stop()
         scheduler = nil
@@ -74,9 +82,17 @@ final class MetricsStore {
     }
 
     func start() {
+        // Resuming calls start() again; a refresh change while paused waits for it.
+        guard !pauseState.isPaused else { return }
         if scheduler == nil {
-            scheduler = SampleScheduler(interval: .seconds(refreshSeconds)) { [weak self] in
-                Task { @MainActor [weak self] in
+            // Fires on the main queue: the samplers run there anyway, so a
+            // background timer only added a thread wake and a Task per tick.
+            scheduler = SampleScheduler(
+                interval: .seconds(refreshSeconds),
+                tolerance: SampleGap.leeway(forInterval: refreshSeconds),
+                queue: .main
+            ) { [weak self] in
+                MainActor.assumeIsolated {
                     self?.tick()
                 }
             }
@@ -90,6 +106,13 @@ final class MetricsStore {
         scheduler?.stop()
     }
 
+    private func applySampleGap() {
+        let gap = SampleGap.maxGap(forInterval: refreshSeconds)
+        cpuSampler.maxGap = gap
+        networkSampler.maxGap = gap
+        processSampler.maxGap = gap
+    }
+
     func handleWake() {
         cpuSampler.reset()
         gpuSampler?.reset()
@@ -98,25 +121,40 @@ final class MetricsStore {
         processSampler.reset()
     }
 
+    /// Stops sampling metrics whose item is hidden. A metric shown again
+    /// reads as the placeholder until its first fresh sample, never a rate
+    /// computed across the time it was hidden.
+    func setVisibleMetrics(_ metrics: Set<Metric>) {
+        for metric in visibleMetrics.subtracting(metrics) {
+            switch metric {
+            case .cpu: cpuSampler.reset(); cpu = nil
+            case .gpu: gpuSampler?.reset(); gpu = nil
+            case .memory: memorySampler.reset(); memory = nil
+            case .network: networkSampler.reset(); network = nil
+            }
+        }
+        visibleMetrics = metrics
+    }
+
     private func tick() {
         let now = ContinuousClock.now
 
-        if let s = cpuSampler.sample(now: now) {
+        if visibleMetrics.contains(.cpu), let s = cpuSampler.sample(now: now) {
             cpu = s
             cpuHistory.append(s)
         }
 
-        if let s = gpuSampler?.sample(now: now) {
+        if visibleMetrics.contains(.gpu), let s = gpuSampler?.sample(now: now) {
             gpu = s
             gpuHistory.append(s)
         }
 
-        if let s = memorySampler.sample(now: now) {
+        if visibleMetrics.contains(.memory), let s = memorySampler.sample(now: now) {
             memory = s
             memoryHistory.append(s)
         }
 
-        if let s = networkSampler.sample(now: now) {
+        if visibleMetrics.contains(.network), let s = networkSampler.sample(now: now) {
             network = s
             networkHistory.append(s)
         }
@@ -154,7 +192,8 @@ final class MetricsStore {
             }
         } else if lastProcessSample != nil {
             processSampler.reset()
-            processes = []
+            topCPU = []
+            topMemory = []
             lastProcessSample = nil
         }
     }
@@ -167,31 +206,41 @@ final class MetricsStore {
         if let last = lastProcessSample, now - last < .milliseconds(300) { return }
         lastProcessSample = now
         if let procs = processSampler.sample(now: now) {
-            processes = procs
+            topCPU = ProcessSampler.topByCPU(procs, limit: Tokens.Panel.topN)
+            topMemory = ProcessSampler.topByMemory(procs, limit: Tokens.Panel.topN)
         }
     }
 
-    private func setupSleepWakeNotifications() {
+    /// Nobody can see the readouts while the system or display sleeps or
+    /// another user's session is in front, so stop sampling and redrawing.
+    private func setupPauseNotifications() {
         let center = NSWorkspace.shared.notificationCenter
-        sleepObserver = center.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.stop()
-            }
+        let pairs: [(pause: Notification.Name, resume: Notification.Name, reason: PauseReason)] = [
+            (NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification, .systemSleep),
+            (NSWorkspace.screensDidSleepNotification, NSWorkspace.screensDidWakeNotification, .displaySleep),
+            (NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.sessionDidBecomeActiveNotification, .sessionInactive),
+        ]
+        for pair in pairs {
+            let reason = pair.reason
+            pauseObservers.append(center.addObserver(forName: pair.pause, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pause(reason) }
+            })
+            pauseObservers.append(center.addObserver(forName: pair.resume, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.resume(reason) }
+            })
         }
-        wakeObserver = center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.handleWake()
-                self.start()
-            }
+    }
+
+    private func pause(_ reason: PauseReason) {
+        if pauseState.pause(reason) {
+            stop()
+        }
+    }
+
+    private func resume(_ reason: PauseReason) {
+        if pauseState.resume(reason) {
+            handleWake()
+            start()
         }
     }
 }

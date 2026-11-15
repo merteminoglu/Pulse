@@ -78,4 +78,32 @@ final class NetworkDeltaTests: XCTestCase {
         XCTAssertEqual(valid?.rxPerSec ?? 0, 2_000, accuracy: 0.001)
         XCTAssertEqual(valid?.txPerSec ?? 0, 1_000, accuracy: 0.001)
     }
+
+    func testReadInterfaceCountersIsStableAcrossCalls() {
+        let first = NetworkSampler.readInterfaceCounters().map(\.name)
+        let second = NetworkSampler.readInterfaceCounters().map(\.name)
+        XCTAssertTrue(first.contains("lo0"))
+        XCTAssertEqual(first, second)
+    }
+
+    func testRateOverTenSecondInterval() {
+        var counters = [
+            RawInterfaceCounters(name: "en0", flags: upNonLoopbackFlags, rxBytes: 1_000, txBytes: 1_000, baudrate: 0)
+        ]
+        let sampler = NetworkSampler(
+            countersProvider: { counters },
+            primaryProvider: { _ in nil }
+        )
+        sampler.maxGap = .seconds(23)
+
+        let t0 = ContinuousClock.now
+        XCTAssertNil(sampler.sample(now: t0))
+
+        counters = [
+            RawInterfaceCounters(name: "en0", flags: upNonLoopbackFlags, rxBytes: 11_000, txBytes: 1_000, baudrate: 0)
+        ]
+        let sample = sampler.sample(now: t0.advanced(by: .seconds(10)))
+        XCTAssertEqual(sample?.rxPerSec ?? -1, 1_000, accuracy: 0.001)
+        XCTAssertEqual(sample?.txPerSec ?? -1, 0, accuracy: 0.001)
+    }
 }

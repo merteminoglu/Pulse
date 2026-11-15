@@ -56,7 +56,7 @@ final class MemorySampler: Sampler {
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let kr = withUnsafeMutablePointer(to: &vmStats) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPtr, &count)
+                host_statistics64(SystemInfo.hostPort, HOST_VM_INFO64, intPtr, &count)
             }
         }
         guard kr == KERN_SUCCESS else { return nil }

@@ -115,8 +115,7 @@ struct MemoryPanel: View {
             }
 
             PanelSection(title: "Top Processes") {
-                let top = ProcessSampler.topByMemory(store.processes, limit: Tokens.Panel.topN)
-                ProcessList(items: top.map { ($0, Fmt.bytes($0.memoryBytes)) })
+                ProcessList(items: store.topMemory.map { ($0, Fmt.bytes($0.memoryBytes)) })
             }
 
             PanelFooter(
